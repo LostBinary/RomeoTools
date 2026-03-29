@@ -2,85 +2,77 @@ import subprocess
 import re
 import requests
 import time
-from collections import defaultdict
 
-# API (puedes cambiarla si quieres más precisión)
-API_URL = "https://ipinfo.io/{}/json"
+# Evitar repetir consultas a la misma IP
+cache = {}
 
-def get_connections():
-    """Obtiene conexiones activas usando netstat"""
-    result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
-    return result.stdout
+def obtener_conexiones():
+    resultado = subprocess.check_output("netstat -ano", shell=True).decode(errors="ignore")
+    return resultado.split("\n")
 
-def extract_ips(netstat_output):
-    """Extrae IPs remotas únicas"""
+def extraer_ips(lineas):
     ips = set()
 
-    for line in netstat_output.splitlines():
-        parts = line.split()
-        if len(parts) >= 3:
-            remote = parts[2]
+    for linea in lineas:
+        match = re.search(r"\d+\.\d+\.\d+\.\d+:\d+\s+(\d+\.\d+\.\d+\.\d+):", linea)
+        if match:
+            ip = match.group(1)
 
-            # Extraer IP sin puerto
-            match = re.match(r"([\d\.]+):\d+", remote)
-            if match:
-                ip = match.group(1)
-                # Ignorar multicast y privadas
-                if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172."):
-                    continue
+            # Ignorar multicast y privadas
+            if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172."):
+                continue
 
-                if ip.startswith("224.") or ip.startswith("239."):
-                    continue
-                
-                # Filtrar IPs locales
-                if not ip.startswith("127.") and not ip.startswith("0.0.0.0"):
-                    ips.add(ip)
+            if ip.startswith("224.") or ip.startswith("239."):
+                continue
+
+            # Filtrar basura
+            if not ip.startswith("127.") and not ip.startswith("0.0.0.0"):
+                ips.add(ip)
 
     return ips
 
-cache = {}
-
-def get_ip_info(ip):
+def consultar_ip(ip):
     if ip in cache:
         return cache[ip]
 
     try:
-        response = requests.get(API_URL.format(ip), timeout=3)
-        data = response.json()
+        r = requests.get(f"https://ipinfo.io/{ip}/json", timeout=3)
+        data = r.json()
 
-        info = {
+        resultado = {
             "ip": ip,
             "org": data.get("org", "Desconocido"),
-            "country": data.get("country", "??")
+            "country": data.get("country", "??"),
+            "region": data.get("region", "??")
         }
 
-        cache[ip] = info
-        return info
+        cache[ip] = resultado
+        return resultado
 
     except:
         return {
             "ip": ip,
             "org": "Error",
-            "country": "??"
+            "country": "??",
+            "region": "??"
         }
 
 def main():
     print("🔍 Analizando conexiones...\n")
 
-    netstat_output = get_connections()
-    ips = extract_ips(netstat_output)
+    lineas = obtener_conexiones()
+    ips = extraer_ips(lineas)
 
     print(f"IPs encontradas: {len(ips)}\n")
 
-    results = []
+    resultado = []
 
     for ip in ips:
-        info = get_ip_info(ip)
-        results.append(info)
+        info = consultar_ip(ip)
+        resultado.append(info)
 
-    # Mostrar resultados ordenados
-    for r in results:
-        print(f"{r['ip']:15} | {r['country']:3} | {r['org']}")
+    for r in resultado:
+        print(f"{r['ip']:15} | {r['org']:<30} | {r['country']:3} | {r['region']}")
 
 if __name__ == "__main__":
     while True:
